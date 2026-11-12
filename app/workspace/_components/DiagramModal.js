@@ -1,9 +1,11 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
 import { X, Download, RefreshCw, GitBranch } from "lucide-react";
-import { chatSession } from "@/configs/AIModel";
+import { useAction } from "convex/react";
+import { api } from "@/convex/_generated/api";
 
 export default function DiagramModal({ selectedText, onClose }) {
+    const generateContent = useAction(api.myAction.generateContent);
     const containerRef = useRef(null);
     const [status, setStatus] = useState("generating"); // generating | rendering | done | error
     const [diagramCode, setDiagramCode] = useState("");
@@ -50,8 +52,7 @@ Text to visualize:
 ${text}
 """`;
 
-            const result = await chatSession.sendMessage(prompt);
-            let raw = result.response.text().trim();
+            let raw = (await generateContent({ prompt })).trim();
 
             // Strip markdown fences if AI added them anyway
             raw = raw.replace(/^```(?:mermaid)?\s*/i, "").replace(/```\s*$/i, "").trim();

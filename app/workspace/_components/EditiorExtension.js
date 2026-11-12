@@ -21,7 +21,6 @@ import { AlignLeft, AlignCenter, AlignRight, AlignJustify } from "lucide-react";
 import { useAction, useMutation } from "convex/react";
 import { useParams } from "next/navigation";
 import { api } from "@/convex/_generated/api";
-import { chatSession } from "@/configs/AIModel";
 import { toast } from "sonner";
 import { useUser } from "@clerk/nextjs";
 import DiagramModal from "./DiagramModal";
@@ -31,6 +30,7 @@ import { encrypt, decrypt } from "@/lib/encryption";
 function EditiorExtension({ editor }) {
   const { fileId } = useParams();
   const SearchAI = useAction(api.myAction.search);
+  const GenerateAI = useAction(api.myAction.generateContent);
   const saveNotes = useMutation(api.notes.AddNotes);
   const { user } = useUser();
   const { aesKey, isPrivacyActive } = usePrivacy();
@@ -147,13 +147,20 @@ function EditiorExtension({ editor }) {
 
   // ── AI Answer ────────────────────────────────────────────────────────────────
   const onAiClick = async () => {
+    const selectedText = editor.state.doc
+      .textBetween(
+        editor.state.selection.from,
+        editor.state.selection.to,
+        " "
+      )
+      .trim();
+
+    if (!selectedText) {
+      toast("Please select some text first to ask AI.");
+      return;
+    }
+
     toast("AI is getting your answer...");
-    const selectedText = editor.state.doc.textBetween(
-      editor.state.selection.from,
-      editor.state.selection.to,
-      " "
-    );
-    console.log("selectedText", selectedText);
 
     try {
       const result = await SearchAI({ query: selectedText, fileId });
@@ -186,9 +193,8 @@ function EditiorExtension({ editor }) {
         " please give appropriate answer in HTML format. The answer content is: " +
         AllUnformattedAns;
 
-      const AiModelResult = await chatSession.sendMessage(PROMT);
-      const FinalAns = AiModelResult.response
-        .text()
+      const AiModelResult = await GenerateAI({ prompt: PROMT });
+      const FinalAns = AiModelResult
         .replace("``````", "")
         .replace("html", "")
         .replace("```", "")

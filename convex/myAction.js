@@ -56,6 +56,100 @@ function makeEmbeddings() {
   return new GeminiEmbeddings(apiKey);
 }
 
+async function generateGeminiText(prompt) {
+  const apiKey =
+    process.env.GOOGLE_API_KEY ||
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+
+  if (!apiKey) {
+    throw new Error(
+      "No Gemini API key found. Set GOOGLE_API_KEY in Convex environment variables."
+    );
+  }
+
+  const models = ["gemini-3.8-flash", "gemini-3.6-flash"];
+  const request = {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey,
+    },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 1,
+        topP: 0.95,
+        topK: 40,
+        maxOutputTokens: 8192,
+        responseMimeType: "text/plain",
+      },
+    }),
+  };
+  const maxRetries = 3;
+  const waitBeforeRetry = (attempt) =>
+    new Promise((resolve) =>
+      setTimeout(resolve, 1000 * 2 ** attempt)
+    );
+  let response;
+  let primaryModelError;
+
+  for (const [modelIndex, model] of models.entries()) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      try {
+        response = await fetch(url, request);
+      } catch (error) {
+        if (attempt === maxRetries) throw error;
+        await waitBeforeRetry(attempt);
+        continue;
+      }
+
+      if (response.status !== 503 || attempt === maxRetries) break;
+
+      await response.text();
+      await waitBeforeRetry(attempt);
+    }
+
+    if (response.status === 503 && modelIndex === 0) {
+      primaryModelError = await response.text();
+      continue;
+    }
+    break;
+  }
+
+  if (!response.ok) {
+    const error = await response.text();
+    if (primaryModelError) {
+      throw new Error(
+        `Gemini 3.8 Flash failed [503]: ${primaryModelError}\n` +
+          `Gemini 3.6 Flash fallback failed [${response.status}]: ${error}`
+      );
+    }
+    throw new Error(
+      `Gemini generation failed [${response.status}]: ${error}`
+    );
+  }
+
+  const result = await response.json();
+  const text = result.candidates?.[0]?.content?.parts
+    ?.map((part) => part.text || "")
+    .join("");
+
+  if (!text) {
+    throw new Error("Gemini returned no generated text.");
+  }
+
+  return text;
+}
+
+export const generateContent = action({
+  args: {
+    prompt: v.string(),
+  },
+  handler: async (_ctx, args) => generateGeminiText(args.prompt),
+});
+
 // ── INGEST ────────────────────────────────────────────────────────────────────
 export const ingest = action({
   args: {
@@ -80,6 +174,10 @@ export const search = action({
     fileId: v.string(),
   },
   handler: async (ctx, args) => {
+    if (!args.query.trim()) {
+      throw new Error("Search query cannot be empty.");
+    }
+
     const vectorStore = new ConvexVectorStore(makeEmbeddings(), { ctx });
 
     const resultOne = (
